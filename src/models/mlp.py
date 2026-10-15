@@ -18,6 +18,8 @@ decide how much dropout it needs.
 """
 from __future__ import annotations
 
+import math
+
 import torch
 import torch.nn as nn
 
@@ -25,7 +27,15 @@ import torch.nn as nn
 class MLP(nn.Module):
     def __init__(self, in_dim: int, hidden: list[int], dropout: float = 0.3, prior: float = 0.5):
         super().__init__()
-        raise NotImplementedError("TASK 2: build the layers")
+        layers: list[nn.Module] = []
+        width = in_dim
+        for size in hidden:
+            layers += [nn.Linear(width, size), nn.ReLU(), nn.Dropout(dropout)]
+            width = size
+        self.body = nn.Sequential(*layers)
+        self.head = nn.Linear(width, 1)
+        nn.init.zeros_(self.head.weight)
+        nn.init.constant_(self.head.bias, math.log(prior / (1 - prior)))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError("TASK 2: one number in [0, 1] per row, shape (batch,)")
+        return torch.sigmoid(self.head(self.body(x))).squeeze(-1)
