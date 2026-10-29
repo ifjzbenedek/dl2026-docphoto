@@ -12,37 +12,23 @@ By the end of the lab this folder is your project repository, public on
 GitHub, with the lab solved and committed. The project description has the
 rules; the rest of this README has the infrastructure.
 
-## Results
+## Eredmények
 
-Validation RMSE on the scoreable rows of held-out strict unit 4 (380 photographs).
+Validációs RMSE a 4-es strict unit értékelhető sorain (380 fotó).
 
-| model | val RMSE |
+| modell | val RMSE |
 |---|---|
-| constant (training mean) | 0.2362 |
-| MLP on 64 px pixels, last of 60 epochs (lab) | 0.2588 |
-| MLP on 64 px pixels, early stopping (homework) | 0.2392 |
-| gradient boosting, 7 features | 0.1732 |
-| gradient boosting, 7 features + `page_frac` (homework) | 0.1723 |
+| konstans (tanító átlag) | 0,2362 |
+| MLP 64 px pixeleken, 60. epoch (órán) | 0,2588 |
+| MLP 64 px pixeleken, early stopping (házi) | 0,2392 |
+| gradient boosting, 7 feature | 0,1732 |
+| gradient boosting, 7 feature + `page_frac` (házi) | 0,1723 |
 
-**Early stopping.** `configs/lab3_mlp_es.yaml` sets aside whole `group`s of the
-training rows (431 photographs) as a stopping set and keeps the weights of the
-epoch with the lowest RMSE on it (epoch 18). The validation unit is only
-measured, never used to choose: 0.2392 against 0.2588 for the last epoch, still
-not better than the constant.
+**Early stopping.** A tanító sorokból félreteszek pár teljes `group`-ot (431 fotó), és azt az epochot tartom meg, ahol ezen a legkisebb az RMSE (18. epoch). A validációt csak a végén mérem: 0,2392, ez jobb a 0,2588-nál, de a konstanst így sem veri meg.
 
-**`src/predict.py`.** Rebuilds the MLP from the checkpoint and takes each photograph
-through the same route as training (768 px JPEG cache, then 64 px grey levels).
-On twenty training photographs it matches `predict` in the training loop to
-1e-7.
+**predict.py.** A checkpointból visszaépíti az MLP-t, és a képet ugyanúgy dolgozza fel, mint a tanítás (768 px JPEG cache, aztán 64 px szürke). 20 tanító fotón 1e-7-re egyezik a loopbeli `predict`-tel.
 
-**My feature, `page_frac`.** The baseline's worst errors are small-font tables, and
-the annotated defects the seven features cannot see are `skew`, `low_resolution`
-and `cropped`. Three candidates were compared by leave-one-strict-unit-out
-cross-validation on the training rows (7 features: 0.2038; skew angle: 0.2025;
-fine-detail ratio: 0.2034; page fraction: 0.2003). The winner, the share of
-the frame brighter than its Otsu threshold, tells how much of the photograph is
-paper, which is how far away it was taken. On validation it moves the baseline
-from 0.1732 to 0.1723: a small gain.
+**Saját feature: `page_frac`.** A 7 feature nem látja, milyen messziről fotózták a lapot, ezért azt mérem, a kép mekkora része papír (Otsu küszöb felett). A tanító sorokon futtatott CV-ben ez volt a legjobb a 3 jelöltből, validáción 0,1732-ről 0,1723-ra javít, ez kicsi.
 
 ## Before the lab
 

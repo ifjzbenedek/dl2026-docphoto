@@ -89,7 +89,6 @@ FEATURES = {
     "bright_frac": bright_fraction,
     "tile_lapvar_min": tile_lapvar_min,
     "tile_dark_max": tile_dark_max,
-    "page_frac": page_fraction,
 }
 
 

@@ -21,6 +21,10 @@ x-common: &common
     # whatever mode WANDB_MODE says, including disabled.
     WANDB_API_KEY: ${WANDB_API_KEY:-}
     WANDB_MODE: ${WANDB_MODE:-online}
+    WANDB_SILENT: ${WANDB_SILENT:-true}
+    GIT_CONFIG_COUNT: "1"
+    GIT_CONFIG_KEY_0: safe.directory
+    GIT_CONFIG_VALUE_0: /workspace
   # PyTorch DataLoader workers share memory through /dev/shm, which defaults to
   # a very small size in containers.
   shm_size: "8gb"
