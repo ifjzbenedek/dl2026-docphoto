@@ -70,7 +70,17 @@ def train_epoch(model: torch.nn.Module, optimizer: torch.optim.Optimizer, loss_f
     run is reproducible, step the optimiser once per minibatch, and return the
     mean training loss over the epoch, weighted by minibatch size.
     """
-    raise NotImplementedError("TASK 4: the minibatch loop")
+    model.train()
+    order = torch.randperm(len(X), generator=generator).to(X.device)
+    total = 0.0
+    for start in range(0, len(X), batch_size):
+        idx = order[start:start + batch_size]
+        optimizer.zero_grad()
+        loss = loss_fn(model(X[idx]), y[idx])
+        loss.backward()
+        optimizer.step()
+        total += loss.item() * len(idx)
+    return total / len(X)
 
 
 def predict(model: torch.nn.Module, X: torch.Tensor, batch_size: int = 1024) -> np.ndarray:
@@ -79,12 +89,15 @@ def predict(model: torch.nn.Module, X: torch.Tensor, batch_size: int = 1024) -> 
     Evaluation mode, no gradients, and it must give the same answer for a row
     whether that row is predicted alone or inside a batch.
     """
-    raise NotImplementedError("TASK 5: inference")
+    model.eval()
+    with torch.no_grad():
+        out = [model(X[start:start + batch_size]) for start in range(0, len(X), batch_size)]
+    return torch.cat(out).cpu().numpy()
 
 
 def validate(model: torch.nn.Module, X_val: torch.Tensor, y_val: np.ndarray, ok: np.ndarray) -> float:
     """TASK 6. RMSE on the validation rows where `ok` is True (the scoreable ones)."""
-    raise NotImplementedError("TASK 6: validation")
+    return rmse(y_val[ok], predict(model, X_val)[ok])
 
 
 # ------------------------------------------------------------------ given
@@ -100,13 +113,24 @@ def train_mlp(cfg: dict, X: np.ndarray, df: pd.DataFrame, train_idx: np.ndarray,
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     set_seed(cfg["seed"])
     tr = cfg["train"]
+    es = tr.get("early_stopping")
+    fit_idx = train_idx
+    if es:
+        inner_fit, inner_stop = build_splits(df.iloc[train_idx], es["group_column"], es["holdout_fraction"],
+                                             cfg["split"]["seed"])
+        fit_idx, stop_idx = train_idx[inner_fit], train_idx[inner_stop]
 
-    scaler = Standardiser().fit(X[train_idx])
-    X_tr = to_tensor(scaler.transform(X[train_idx]), device)
+    scaler = Standardiser().fit(X[fit_idx])
+    X_tr = to_tensor(scaler.transform(X[fit_idx]), device)
     X_va = to_tensor(scaler.transform(X[val_idx]), device)
-    y_tr = to_tensor(df[config.TARGET].to_numpy()[train_idx], device)
+    y_tr = to_tensor(df[config.TARGET].to_numpy()[fit_idx], device)
     y_va = df[config.TARGET].to_numpy()[val_idx]
     ok = df["eval_ok"].to_numpy()[val_idx] == 1
+    if es:
+        X_st = to_tensor(scaler.transform(X[stop_idx]), device)
+        y_st = df[config.TARGET].to_numpy()[stop_idx]
+        ok_st = df["eval_ok"].to_numpy()[stop_idx] == 1
+        best = {"rmse": float("inf")}
 
     model = MLP(in_dim=X.shape[1], hidden=list(cfg["model"]["hidden"]), dropout=cfg["model"]["dropout"],
                 prior=float(y_tr.mean())).to(device)
@@ -116,8 +140,9 @@ def train_mlp(cfg: dict, X: np.ndarray, df: pd.DataFrame, train_idx: np.ndarray,
 
     tracking.init_run(cfg, tags=tags)
     history, snapshots = [], {}
-    log(f"{cfg['name']}: {len(train_idx)} train / {len(val_idx)} val rows, {X.shape[1]} inputs, "
-        f"{sum(p.numel() for p in model.parameters()):,} parameters, {device}")
+    log(f"{cfg['name']}: {len(fit_idx)} train / {len(val_idx)} val rows, {X.shape[1]} inputs, "
+        f"{sum(p.numel() for p in model.parameters()):,} parameters, {device}"
+        + (f", {len(stop_idx)} training rows held out for early stopping" if es else ""))
     for epoch in range(1, tr["epochs"] + 1):
         t0 = time.time()
         loss = train_epoch(model, optimizer, loss_fn, X_tr, y_tr, tr["batch_size"], generator)
@@ -125,23 +150,38 @@ def train_mlp(cfg: dict, X: np.ndarray, df: pd.DataFrame, train_idx: np.ndarray,
         train_eval = rmse(y_tr.cpu().numpy(), predict(model, X_tr))   # dropout off, as in validation
         row = {"epoch": epoch, "train_loss": loss, "train_rmse": train_eval, "val_rmse": val,
                "seconds": time.time() - t0}
+        metrics = {"train_loss": loss, "train_rmse": train_eval, "val_rmse": val}
+        if es:
+            row["stop_rmse"] = metrics["stop_rmse"] = validate(model, X_st, y_st, ok_st)
+            if row["stop_rmse"] < best["rmse"]:
+                best = {"rmse": row["stop_rmse"], "epoch": epoch,
+                        "state": {k: v.detach().clone() for k, v in model.state_dict().items()}}
         history.append(row)
-        tracking.log_metrics({"train_loss": loss, "train_rmse": train_eval, "val_rmse": val}, step=epoch)
+        tracking.log_metrics(metrics, step=epoch)
         if epoch in (1, tr["epochs"]) or epoch % tr.get("log_every", 10) == 0:
             log(f"epoch {epoch:3d}  train loss {loss:.4f}  train RMSE {train_eval:.4f}  val RMSE {val:.4f}")
         if epoch in (1, tr["epochs"]):
             snapshots[epoch] = predict(model, X_va)
 
+    best_epoch = tr["epochs"]
+    if es:
+        model.load_state_dict(best["state"])
+        best_epoch = best["epoch"]
+    final_val = validate(model, X_va, y_va, ok)
+    if es:
+        log(f"early stopping: best epoch {best_epoch} (stop RMSE {best['rmse']:.4f}), val RMSE {final_val:.4f}")
+
     ckpt = config.ROOT / "models" / f"{cfg['name']}.pt"
     ckpt.parent.mkdir(exist_ok=True)
     torch.save({"state_dict": model.state_dict(), "config": cfg, "in_dim": X.shape[1],
                 "scaler_mean": scaler.mean, "scaler_scale": scaler.scale}, ckpt)
-    tracking.log_checkpoint(ckpt, cfg["name"], {"val_rmse": history[-1]["val_rmse"]})
-    tracking.log_metrics({"final_val_rmse": history[-1]["val_rmse"]})
+    tracking.log_checkpoint(ckpt, cfg["name"], {"val_rmse": final_val, "best_epoch": best_epoch})
+    tracking.log_metrics({"final_val_rmse": final_val, "best_epoch": best_epoch})
     url = tracking.run_url()
     tracking.finish()
-    return {"history": pd.DataFrame(history), "val_pred": snapshots[tr["epochs"]], "snapshots": snapshots,
-            "model": model, "checkpoint": ckpt, "url": url, "val_index": val_idx, "ok": ok}
+    return {"history": pd.DataFrame(history), "val_pred": predict(model, X_va), "snapshots": snapshots,
+            "model": model, "checkpoint": ckpt, "url": url, "val_index": val_idx, "ok": ok,
+            "best_epoch": best_epoch, "final_val_rmse": final_val}
 
 
 def main() -> None:
@@ -154,8 +194,8 @@ def main() -> None:
     X = pixel_table(df, cfg["data"]["pixel_size"])
     train_idx, val_idx = build_splits(df, cfg["split"]["group_column"], cfg["split"]["val_fraction"], cfg["split"]["seed"])
     result = train_mlp(cfg, X, df, train_idx, val_idx)
-    print(f"final val RMSE {result['history']['val_rmse'].iloc[-1]:.4f}  checkpoint {result['checkpoint']}  "
-          f"run {result['url']}")
+    print(f"final val RMSE {result['final_val_rmse']:.4f} (epoch {result['best_epoch']})  "
+          f"checkpoint {result['checkpoint']}  run {result['url']}")
 
 
 if __name__ == "__main__":

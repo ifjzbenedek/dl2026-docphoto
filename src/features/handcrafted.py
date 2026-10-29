@@ -76,6 +76,11 @@ def tile_dark_max(gray: np.ndarray, threshold: int = 64) -> float:
     return float(max((t < threshold).mean() for t in _tiles(gray)))
 
 
+def page_fraction(gray: np.ndarray) -> float:
+    t, _ = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    return float((gray > t).mean())
+
+
 FEATURES = {
     "lap_var": laplacian_variance,
     "dark_frac": dark_fraction,
@@ -84,6 +89,7 @@ FEATURES = {
     "bright_frac": bright_fraction,
     "tile_lapvar_min": tile_lapvar_min,
     "tile_dark_max": tile_dark_max,
+    "page_frac": page_fraction,
 }
 
 

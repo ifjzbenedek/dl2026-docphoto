@@ -1,0 +1,32 @@
+name: lab3_mlp_es
+seed: 42
+
+data:
+  labels: data/raw/train.csv
+  images: data/raw/train
+  pixel_size: 64
+
+split:
+  strategy: by_group
+  group_column: group_strict
+  val_fraction: 0.2
+  seed: 3
+
+model:
+  type: mlp
+  hidden: [256, 64]
+  dropout: 0.3
+
+train:
+  epochs: 60
+  batch_size: 64
+  lr: 0.0003
+  weight_decay: 0.0001
+  log_every: 10
+  early_stopping:
+    group_column: group
+    holdout_fraction: 0.2
+
+wandb:
+  project: dl2026-docphoto
+  tags: [lab3, early-stopping]

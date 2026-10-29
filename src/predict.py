@@ -42,10 +42,18 @@ information across the test set. See section 2 of the project description.
 from __future__ import annotations
 
 import argparse
+import io
 from pathlib import Path
 
 import pandas as pd
+import torch
 import yaml
+from PIL import Image
+
+from src.data.dataset import pixels_of_image
+from src.models.mlp import MLP
+
+CACHE_SIZE = 768
 
 
 def load_model(checkpoint: Path, cfg: dict):
@@ -54,7 +62,18 @@ def load_model(checkpoint: Path, cfg: dict):
     Put the model in eval mode and disable gradients. Return something callable
     that maps one preprocessed image to one float.
     """
-    raise NotImplementedError("TODO: build the model and load the checkpoint")
+    ckpt = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    model = MLP(in_dim=ckpt["in_dim"], hidden=list(ckpt["config"]["model"]["hidden"]),
+                dropout=ckpt["config"]["model"]["dropout"])
+    model.load_state_dict(ckpt["state_dict"])
+    model.eval()
+    mean, scale = ckpt["scaler_mean"], ckpt["scaler_scale"]
+
+    @torch.no_grad()
+    def run(pixels) -> float:
+        return float(model(torch.as_tensor((pixels - mean) / scale, dtype=torch.float32)[None])[0])
+
+    return run
 
 
 def preprocess(image_path: Path, cfg: dict):
@@ -64,12 +83,19 @@ def preprocess(image_path: Path, cfg: dict):
     between training and prediction is the single most common reason a good
     validation score turns into a bad leaderboard score.
     """
-    raise NotImplementedError("TODO: load and preprocess a single image")
+    im = Image.open(image_path)
+    im.draft("RGB", (CACHE_SIZE, CACHE_SIZE))
+    im = im.convert("RGB")
+    im.thumbnail((CACHE_SIZE, CACHE_SIZE), Image.LANCZOS)
+    buf = io.BytesIO()
+    im.save(buf, format="JPEG", quality=92)
+    buf.seek(0)
+    return pixels_of_image(buf, cfg["data"]["pixel_size"])
 
 
 def predict_one(model, image_path: Path, cfg: dict) -> float:
     """One image in, one number out."""
-    raise NotImplementedError("TODO: run the model, return a float in [0, 1]")
+    return model(preprocess(image_path, cfg))
 
 
 def main() -> None:
